@@ -271,7 +271,7 @@ with st.sidebar:
     # Cheapest/free-tier-friendly first
     base_models = {
         "ChatGPT": ["gpt-4o-mini", "gpt-4o"],
-        "Claude":  ["claude-3-haiku-20240307", "claude-3-5-sonnet-20240620"],
+        "Claude":  ["claude-3-haiku-20240307"],
         "Gemini":  ["gemini-1.5-flash", "gemini-1.5-pro"],
     }
     base_model = st.selectbox("Base model:", base_models[provider], index=0)
