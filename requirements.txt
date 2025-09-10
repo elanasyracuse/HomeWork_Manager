@@ -4,3 +4,5 @@ requests
 beautifulsoup4
 PyPDF2
 pymupdf
+anthropic
+google-generativeai

@@ -63,14 +63,20 @@ def get_key(provider: str) -> Optional[str]:
         "Gemini":  "GEMINI_API_KEY",
     }[provider]
 
+    # First try environment variable
     key = os.getenv(env_var)
-    if key:
-        return key
+    if key and key.strip():
+        return key.strip()
 
+    # Then try Streamlit secrets
     try:
-        return st.secrets.get(env_var)
+        key = st.secrets.get(env_var)
+        if key and key.strip():
+            return key.strip()
     except Exception:
-        return None
+        pass
+    
+    return None
 
 # ---------- Prompt building ----------
 def build_instructions(style_key: str) -> str:
@@ -101,6 +107,9 @@ def summarize_openai(model: str, prompt: str, key: str) -> str:
     return resp.choices[0].message.content.strip()
 
 def validate_openai(key: str) -> None:
+    if not key or not key.strip():
+        raise ValueError("OpenAI API key is empty or None")
+    
     from openai import OpenAI
     client = OpenAI(api_key=key)
     _ = client.chat.completions.create(
@@ -121,17 +130,30 @@ def summarize_claude(model: str, prompt: str, key: str) -> str:
     return "".join(getattr(block, "text", "") for block in msg.content).strip()
 
 def validate_claude(key: str) -> None:
+    if not key or not key.strip():
+        raise ValueError("Claude API key is empty or None")
+    
+    # Check if key has proper format (should start with 'sk-ant-')
+    if not key.startswith('sk-ant-'):
+        raise ValueError("Claude API key should start with 'sk-ant-'. Please check your API key format.")
+    
     try:
         import anthropic
     except ImportError:
         raise RuntimeError("Claude SDK not installed. Run: pip install anthropic")
+    
     client = anthropic.Anthropic(api_key=key)
-    _ = client.messages.create(
-        model="claude-3-haiku-20240307",
-        max_tokens=5,
-        messages=[{"role": "user", "content": "ping"}],
-        temperature=0,
-    )
+    try:
+        _ = client.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=5,
+            messages=[{"role": "user", "content": "ping"}],
+            temperature=0,
+        )
+    except Exception as e:
+        if "authentication_error" in str(e).lower():
+            raise ValueError("Invalid Claude API key. Please check that your API key is correct and active.")
+        raise
 
 def summarize_gemini(model: str, prompt: str, key: str) -> str:
     import google.generativeai as genai
@@ -156,6 +178,9 @@ def summarize_gemini(model: str, prompt: str, key: str) -> str:
         raise
 
 def validate_gemini(key: str) -> None:
+    if not key or not key.strip():
+        raise ValueError("Gemini API key is empty or None")
+    
     import google.generativeai as genai
     genai.configure(api_key=key)
     _ = genai.GenerativeModel("gemini-1.5-flash").generate_content("ping")
@@ -182,9 +207,16 @@ if "validated_providers" not in st.session_state:
     st.session_state.validated_providers = set()
 
 def validate_key_once(provider: str, key: str):
-    if provider in st.session_state.validated_providers:
+    # Always validate if key has changed
+    cache_key = f"{provider}_{key[:10] if key else 'none'}"
+    if cache_key in st.session_state.get('validated_cache', set()):
         return
+    
     validate_key(provider, key)
+    
+    if 'validated_cache' not in st.session_state:
+        st.session_state.validated_cache = set()
+    st.session_state.validated_cache.add(cache_key)
     st.session_state.validated_providers.add(provider)
 
 # ---------- Chunking (map -> reduce) ----------
@@ -236,7 +268,6 @@ MODEL_CATALOG = {
     "ChatGPT": {
         "less_expensive": "gpt-4o-mini",      # budget
         "latest":         "gpt-4o",           # premium/latest stable
-        # If you want to try bleeding-edge later, you can swap to: "gpt-5-chat-latest"
     },
     "Claude": {
         "less_expensive": "claude-3-haiku-20240307",
@@ -301,19 +332,42 @@ if url.strip():
     else:
         chosen_provider = provider
         key = get_key(chosen_provider)
+        
         if not key:
             st.error(
                 f"Missing API key for **{chosen_provider}**. "
                 "Set it in `.env` or Streamlit secrets. "
                 f"Expected variable: `{ {'ChatGPT':'OPENAI_API_KEY','Claude':'ANTHROPIC_API_KEY','Gemini':'GEMINI_API_KEY'}[chosen_provider] }`"
             )
+            
+            # Show helpful instructions
+            if chosen_provider == "Claude":
+                st.info("""
+                **To get a Claude API key:**
+                1. Go to https://console.anthropic.com/
+                2. Sign up or log in to your account
+                3. Navigate to API Keys section
+                4. Create a new API key
+                5. The key should start with 'sk-ant-'
+                """)
         else:
             try:
                 with st.spinner(f"Validating {chosen_provider} key…"):
                     validate_key_once(chosen_provider, key)
                 st.success(f"{chosen_provider} key validated ✅")
+            except ValueError as e:
+                st.error(f"**{chosen_provider} API Key Error:** {str(e)}")
+                if chosen_provider == "Claude":
+                    st.info("""
+                    **Common Claude API key issues:**
+                    - Make sure your key starts with 'sk-ant-'
+                    - Check that you copied the entire key without extra spaces
+                    - Verify the key is active in your Anthropic Console
+                    - Make sure you have credits/usage remaining
+                    """)
+                st.stop()
             except Exception as e:
-                st.error(f"{chosen_provider} validation failed.")
+                st.error(f"{chosen_provider} validation failed: {str(e)}")
                 st.exception(e)
                 st.stop()
 
@@ -335,13 +389,3 @@ if url.strip():
             except Exception as e:
                 st.error(f"{chosen_provider} error while generating the summary.")
                 st.exception(e)
-
-# ---------- Deps hint ----------
-# with st.expander("Dependencies"):
-#     st.markdown(
-#         """
-#         ```
-#         pip install streamlit openai anthropic google-generativeai beautifulsoup4 requests python-dotenv
-#         ```
-#         """
-#     )
