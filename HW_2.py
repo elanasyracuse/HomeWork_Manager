@@ -39,7 +39,7 @@ def read_url_content(url: str) -> Optional[str]:
     except requests.RequestException:
         pass
 
-    # 2) Fallback: simple text proxy (works on many JS/blocked pages)
+    # 2) Fallback: simple text proxy (handles many JS/blocked pages)
     try:
         if not re.match(r"^https?://", url, flags=re.I):
             url = "https://" + url
@@ -59,8 +59,8 @@ def read_url_content(url: str) -> Optional[str]:
 def get_key(provider: str) -> Optional[str]:
     env_var = {
         "ChatGPT": "OPENAI_API_KEY",
-        "Claude": "ANTHROPIC_API_KEY",
-        "Gemini": "GEMINI_API_KEY",
+        "Claude":  "ANTHROPIC_API_KEY",
+        "Gemini":  "GEMINI_API_KEY",
     }[provider]
 
     key = os.getenv(env_var)
@@ -114,7 +114,7 @@ def summarize_claude(model: str, prompt: str, key: str) -> str:
     client = anthropic.Anthropic(api_key=key)
     msg = client.messages.create(
         model=model,
-        max_tokens=1200,  # conservative for free tier
+        max_tokens=1200,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
     )
@@ -125,28 +125,17 @@ def validate_claude(key: str) -> None:
         import anthropic
     except ImportError:
         raise RuntimeError("Claude SDK not installed. Run: pip install anthropic")
-
     client = anthropic.Anthropic(api_key=key)
-    try:
-        _ = client.messages.create(
-            model="claude-3-haiku-20240307",  # free/cheapest-friendly
-            max_tokens=5,
-            messages=[{"role": "user", "content": "ping"}],
-            temperature=0,
-        )
-    except Exception as e:
-        msg = str(e).lower()
-        # Convert common billing/rate-limit errors into readable signals (no fallback)
-        if "credit balance is too low" in msg or "insufficient" in msg:
-            raise RuntimeError("Claude error: insufficient credits on your Anthropic account.")
-        if "rate limit" in msg or "too many requests" in msg:
-            raise RuntimeError("Claude error: rate limited on the free tier. Please retry later.")
-        raise
+    _ = client.messages.create(
+        model="claude-3-haiku-20240307",
+        max_tokens=5,
+        messages=[{"role": "user", "content": "ping"}],
+        temperature=0,
+    )
 
 def summarize_gemini(model: str, prompt: str, key: str) -> str:
     import google.generativeai as genai
     from google.api_core.exceptions import ResourceExhausted
-
     genai.configure(api_key=key)
 
     def _try(model_name: str) -> str:
@@ -157,7 +146,6 @@ def summarize_gemini(model: str, prompt: str, key: str) -> str:
     try:
         return _try(model)
     except ResourceExhausted:
-        # Auto-fallback to free-tier-friendly Flash
         if model != "gemini-1.5-flash":
             return _try("gemini-1.5-flash")
         raise
@@ -170,7 +158,6 @@ def summarize_gemini(model: str, prompt: str, key: str) -> str:
 def validate_gemini(key: str) -> None:
     import google.generativeai as genai
     genai.configure(api_key=key)
-    # Validate against cheaper model to avoid burning quota
     _ = genai.GenerativeModel("gemini-1.5-flash").generate_content("ping")
 
 def call_provider(provider: str, model: str, prompt: str, key: str) -> str:
@@ -203,8 +190,8 @@ def validate_key_once(provider: str, key: str):
 # ---------- Chunking (map -> reduce) ----------
 PROVIDER_CHUNK_SIZE = {
     "ChatGPT": 9000,
-    "Claude":  7000,  # a bit smaller to be free-tier friendly
-    "Gemini":  6000,  # smaller helps free-tier quotas
+    "Claude":  7000,
+    "Gemini":  6000,
 }
 OVERLAP = 400
 
@@ -244,6 +231,23 @@ def generate_summary(provider: str, model: str, text: str, style_key: str, langu
     else:
         return summarize_long_text(provider, model, text, style_key, language, key)
 
+# ---------- Model catalog (Less expensive vs Latest) ----------
+MODEL_CATALOG = {
+    "ChatGPT": {
+        "less_expensive": "gpt-4o-mini",      # budget
+        "latest":         "gpt-4o",           # premium/latest stable
+        # If you want to try bleeding-edge later, you can swap to: "gpt-5-chat-latest"
+    },
+    "Claude": {
+        "less_expensive": "claude-3-haiku-20240307",
+        "latest":         "claude-3-5-sonnet-20240620",
+    },
+    "Gemini": {
+        "less_expensive": "gemini-1.5-flash",
+        "latest":         "gemini-1.5-pro",
+    },
+}
+
 # ---------- UI ----------
 st.title("🌐 HW 2 — URL Summarizer (ChatGPT · Claude · Gemini)")
 
@@ -268,16 +272,16 @@ with st.sidebar:
 
     provider = st.selectbox("LLM Provider", ["ChatGPT", "Claude", "Gemini"], index=0)
 
-    # Cheapest/free-tier-friendly first
-    base_models = {
-        "ChatGPT": ["gpt-4o-mini", "gpt-4o"],
-        "Claude":  ["claude-3-haiku-20240307"],
-        "Gemini":  ["gemini-1.5-flash", "gemini-1.5-pro"],
-    }
-    base_model = st.selectbox("Base model:", base_models[provider], index=0)
-    use_advanced = st.checkbox("Use Advanced Model", value=False)
+    tier = st.radio(
+        "Model tier",
+        ["Less expensive", "Latest"],
+        help="Switch between low-cost and premium/latest models for the selected provider.",
+        index=0,
+    )
 
-    model = base_models[provider][1] if use_advanced and len(base_models[provider]) > 1 else base_model
+    # Bind tier -> concrete model name
+    model = MODEL_CATALOG[provider]["less_expensive" if tier == "Less expensive" else "latest"]
+    st.write(f"**Using model:** `{model}`")
 
 style_key = (
     "100_words"
@@ -304,7 +308,6 @@ if url.strip():
                 f"Expected variable: `{ {'ChatGPT':'OPENAI_API_KEY','Claude':'ANTHROPIC_API_KEY','Gemini':'GEMINI_API_KEY'}[chosen_provider] }`"
             )
         else:
-            # Validate once; if Claude has issues, show error (no fallback)
             try:
                 with st.spinner(f"Validating {chosen_provider} key…"):
                     validate_key_once(chosen_provider, key)
@@ -320,11 +323,14 @@ if url.strip():
                 with st.spinner(f"Summarizing with {chosen_provider} · {model}…"):
                     output = generate_summary(chosen_provider, model, text, style_key, language, key)
                 st.write(output)
+
                 # Gentle note about Gemini fallback if user chose Pro
                 if chosen_provider == "Gemini" and model == "gemini-1.5-pro":
-                    st.caption("Note: If Gemini hit free-tier quotas, the app automatically fell back to **gemini-1.5-flash**.")
+                    st.caption("Note: If Gemini hit free-tier quotas, the app may automatically fall back to **gemini-1.5-flash**.")
+
                 st.caption(
-                    f"Provider: `{chosen_provider}` · Model: `{model}` · Style: **{summary_choice}** · Language: **{language}**"
+                    f"Provider: `{chosen_provider}` · Tier: **{tier}** · Model: `{model}` · "
+                    f"Style: **{summary_choice}** · Language: **{language}**"
                 )
             except Exception as e:
                 st.error(f"{chosen_provider} error while generating the summary.")
@@ -335,7 +341,7 @@ if url.strip():
 #     st.markdown(
 #         """
 #         ```
-#         pip install openai anthropic google-generativeai beautifulsoup4 requests python-dotenv
+#         pip install streamlit openai anthropic google-generativeai beautifulsoup4 requests python-dotenv
 #         ```
 #         """
 #     )
