@@ -16,7 +16,7 @@ GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
 # App setup
 # ---------------------------
 st.set_page_config(page_title="Streaming Chatbot (URLs)", page_icon=":material/chat:", layout="wide")
-st.title("HW 3 — Streaming Chatbot that discusses 1–2 URLs")
+st.title("Streaming Chatbot (URLs)")
 
 # =========================
 # Helpers
@@ -119,10 +119,27 @@ def maybe_update_summary_memory(messages):
 # =========================
 # Providers & models
 # =========================
+# =========================
+# Providers & models
+# =========================
 PROVIDERS = ["OpenAI", "Claude (Anthropic)", "Gemini (Google)"]
-OPENAI_MODELS = {"Cheap": "gpt-4o-mini", "Flagship": "gpt-5-chat-latest"}
-ANTHROPIC_MODELS = {"Cheap": "claude-3-haiku-20240307", "Flagship": "claude-3-5-sonnet-20240620"}
-GEMINI_MODELS = {"Cheap": "gemini-1.5-flash", "Flagship": "gemini-1.5-pro"}
+
+OPENAI_MODELS = {
+    "Cheap": "gpt-4o-mini",
+    "Flagship": "gpt-5-chat-latest",
+}
+
+# ✅ Updated Anthropic models (old claude-3-5-sonnet is deprecated)
+ANTHROPIC_MODELS = {
+    "Cheap": "claude-3-7-sonnet-20250219",   # stable "cheap" choice
+    "Flagship": "claude-sonnet-4-20250514",  # current flagship
+}
+
+GEMINI_MODELS = {
+    "Cheap": "gemini-1.5-flash",
+    "Flagship": "gemini-1.5-pro",
+}
+
 
 def call_openai(messages, model_name: str, stream: bool = True):
     if not OPENAI_KEY:
@@ -154,6 +171,23 @@ def call_openai(messages, model_name: str, stream: bool = True):
         except Exception as e:
             st.error(f"OpenAI request failed: {e}")
             return None, {}
+        
+def get_anthropic_models():
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        model_ids = [m.id for m in client.models.list().data]
+
+        cheap = next((m for m in model_ids if "3-7-sonnet" in m), "claude-3-7-sonnet-20250219")
+        flagship = next((m for m in model_ids if "sonnet-4" in m), "claude-sonnet-4-20250514")
+
+        return {"Cheap": cheap, "Flagship": flagship}
+    except Exception:
+        return {
+            "Cheap": "claude-3-7-sonnet-20250219",
+            "Flagship": "claude-sonnet-4-20250514",
+        }
+
 
 def call_anthropic(messages, model_name: str):
     if not ANTHROPIC_KEY:
@@ -190,6 +224,8 @@ def call_anthropic(messages, model_name: str):
     except Exception as e:
         st.error(f"Anthropic request failed: {e}")
         return None, {}
+    
+
 
 def call_gemini(messages, model_name: str):
     if not GEMINI_KEY:
