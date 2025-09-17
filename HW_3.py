@@ -1,13 +1,22 @@
+import os
+import re
+import requests
 import streamlit as st
-import requests, re, os
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv  # NEW
+from dotenv import load_dotenv
 
-# =========================
+# ---------------------------
+# Load .env (only source of keys)
+# ---------------------------
+load_dotenv()
+OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
+ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# ---------------------------
 # App setup
-# =========================
-st.set_page_config(page_title="HW 3 — Streaming Chatbot (URLs)", page_icon=":material/chat:", layout="wide")
-load_dotenv()  # loads variables from local .env into process env
+# ---------------------------
+st.set_page_config(page_title="Streaming Chatbot (URLs)", page_icon=":material/chat:", layout="wide")
 st.title("HW 3 — Streaming Chatbot that discusses 1–2 URLs")
 
 # =========================
@@ -20,11 +29,9 @@ def read_url_text(url: str) -> str:
         r = requests.get(url, timeout=25)
         r.raise_for_status()
         soup = BeautifulSoup(r.content, "html.parser")
-        # Drop script/style
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
         text = soup.get_text(separator="\n")
-        # Normalize whitespace
         return re.sub(r"\n{3,}", "\n\n", text).strip()
     except Exception as e:
         st.error(f"Failed to read {url}: {e}")
@@ -58,7 +65,6 @@ def build_context_messages(messages, memory_type: str):
     if memory_type == "Buffer of 6 questions":
         # Keep last 6 user turns and their assistant replies (roughly last 12 messages)
         trimmed = []
-        # Walk backwards collecting pairs
         user_turns = 0
         for m in reversed(messages):
             trimmed.append(m)
@@ -92,17 +98,11 @@ def build_context_messages(messages, memory_type: str):
 
 def maybe_update_summary_memory(messages):
     """Update the running summary using OpenAI mini if available and conversation grew."""
-    if len(messages) < 8:
+    if len(messages) < 8 or not OPENAI_KEY:
         return
-
-    api_key = os.getenv("OPENAI_API_KEY", "")  # ENV instead of secrets
-    if not api_key:
-        return  # silent no-op; summary memory still works with recent turns
-    
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        # Summarize last ~12 messages to keep costs tiny
+        client = OpenAI(api_key=OPENAI_KEY)
         last = messages[-12:]
         prompt = "Summarize the conversation so far in 6–8 compact bullets capturing facts, decisions, and follow-ups."
         resp = client.chat.completions.create(
@@ -114,7 +114,8 @@ def maybe_update_summary_memory(messages):
         )
         st.session_state.summary_memory = resp.choices[0].message.content.strip()
     except Exception:
-        pass  # Best-effort
+        # Best-effort only
+        pass
 
 # =========================
 # Providers & models
@@ -125,12 +126,15 @@ ANTHROPIC_MODELS = {"Cheap": "claude-3-haiku-20240307", "Flagship": "claude-3-5-
 GEMINI_MODELS = {"Cheap": "gemini-1.5-flash", "Flagship": "gemini-1.5-pro"}
 
 def call_openai(messages, model_name: str, stream: bool = True):
-    from openai import OpenAI
-    key = os.getenv("OPENAI_API_KEY", "")  # ENV
-    if not key:
-        st.error("OpenAI API key missing. Set OPENAI_API_KEY in your .env or environment.")
+    if not OPENAI_KEY:
+        st.error("OpenAI API key missing. Set OPENAI_API_KEY in your .env")
         return None, {}
-    client = OpenAI(api_key=key)
+    try:
+        from openai import OpenAI
+    except Exception as e:
+        st.error(f"OpenAI SDK import error: {e}")
+        return None, {}
+    client = OpenAI(api_key=OPENAI_KEY)
     if stream:
         try:
             resp = client.chat.completions.create(model=model_name, messages=messages, stream=True)
@@ -153,16 +157,16 @@ def call_openai(messages, model_name: str, stream: bool = True):
             return None, {}
 
 def call_anthropic(messages, model_name: str):
+    if not ANTHROPIC_KEY:
+        st.error("Anthropic API key missing. Set ANTHROPIC_API_KEY in your .env")
+        return None, {}
     try:
         import anthropic
     except Exception as e:
         st.error(f"Anthropic SDK import error: {e}")
         return None, {}
-    key = os.getenv("ANTHROPIC_API_KEY", "")  # ENV
-    if not key:
-        st.error("Anthropic API key missing. Set ANTHROPIC_API_KEY in your .env or environment.")
-        return None, {}
-    client = anthropic.Anthropic(api_key=key)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+
     # Convert OpenAI-style messages -> Anthropic
     sys = ""
     user_content = []
@@ -189,16 +193,15 @@ def call_anthropic(messages, model_name: str):
         return None, {}
 
 def call_gemini(messages, model_name: str):
+    if not GEMINI_KEY:
+        st.error("Google Gemini API key missing. Set GEMINI_API_KEY in your .env")
+        return None, {}
     try:
         import google.generativeai as genai
     except Exception as e:
         st.error(f"Google Generative AI SDK import error: {e}")
         return None, {}
-    key = os.getenv("GOOGLE_API_KEY", "")  # ENV
-    if not key:
-        st.error("Google Gemini API key missing. Set GOOGLE_API_KEY in your .env or environment.")
-        return None, {}
-    genai.configure(api_key=key)
+    genai.configure(api_key=GEMINI_KEY)
 
     # Collapse messages to a single prompt; Gemini supports multi-turn but this is simplest
     compiled = []
@@ -240,7 +243,7 @@ with st.sidebar:
                                help="Choose how much prior conversation the model sees.")
 
     st.divider()
-    st.caption("API keys are read from environment variables (.env): OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY.")
+    st.caption("API keys are loaded from your .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY).")
 
 # =========================
 # Initialize session state
@@ -290,10 +293,11 @@ if prompt:
              f"<URL2>\n{u2_text[:15000]}\n</URL2>" if u2_text else "" ]
         ).strip()
 
-        question_block = f"""Use ONLY the information in the provided URL texts and our conversation. 
-If a detail is not in the URLs, say you don't have that info from the sources.
-Answer clearly. If both URLs disagree, point it out.
-""".strip()
+        question_block = (
+            "Use ONLY the information in the provided URL texts and our conversation. "
+            "If a detail is not in the URLs, say you don't have that info from the sources. "
+            "Answer clearly. If both URLs disagree, point it out."
+        )
 
         # Compose messages with selected memory strategy
         base_messages = build_context_messages(st.session_state.chat, memory_type)
