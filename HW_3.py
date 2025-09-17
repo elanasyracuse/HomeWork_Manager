@@ -3,15 +3,14 @@ import re
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 
 # ---------------------------
-# Load .env (only source of keys)
+# Load secrets from .streamlit/secrets.toml
 # ---------------------------
-load_dotenv()
-OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
-ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+# These return "" if not present, so we can safely check truthiness.
+OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", "")
+ANTHROPIC_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
+GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
 # ---------------------------
 # App setup
@@ -127,7 +126,7 @@ GEMINI_MODELS = {"Cheap": "gemini-1.5-flash", "Flagship": "gemini-1.5-pro"}
 
 def call_openai(messages, model_name: str, stream: bool = True):
     if not OPENAI_KEY:
-        st.error("OpenAI API key missing. Set OPENAI_API_KEY in your .env")
+        st.error("OpenAI API key missing. Add OPENAI_API_KEY to your .streamlit/secrets.toml")
         return None, {}
     try:
         from openai import OpenAI
@@ -158,7 +157,7 @@ def call_openai(messages, model_name: str, stream: bool = True):
 
 def call_anthropic(messages, model_name: str):
     if not ANTHROPIC_KEY:
-        st.error("Anthropic API key missing. Set ANTHROPIC_API_KEY in your .env")
+        st.error("Anthropic API key missing. Add ANTHROPIC_API_KEY to your .streamlit/secrets.toml")
         return None, {}
     try:
         import anthropic
@@ -194,7 +193,7 @@ def call_anthropic(messages, model_name: str):
 
 def call_gemini(messages, model_name: str):
     if not GEMINI_KEY:
-        st.error("Google Gemini API key missing. Set GEMINI_API_KEY in your .env")
+        st.error("Google Gemini API key missing. Add GEMINI_API_KEY to your .streamlit/secrets.toml")
         return None, {}
     try:
         import google.generativeai as genai
@@ -211,7 +210,7 @@ def call_gemini(messages, model_name: str):
     try:
         model = genai.GenerativeModel(model_name)
         resp = model.generate_content(prompt)
-        text = getattr(resp, "text", None) or ""
+        text = getattr(resp, "text", "") or ""
         return chunk_stream(text), {"provider": "Google Gemini", "model": model_name, "streamed": True}
     except Exception as e:
         st.error(f"Gemini request failed: {e}")
@@ -243,7 +242,7 @@ with st.sidebar:
                                help="Choose how much prior conversation the model sees.")
 
     st.divider()
-    st.caption("API keys are loaded from your .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY).")
+    st.caption("API keys are read from .streamlit/secrets.toml (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY).")
 
 # =========================
 # Initialize session state
