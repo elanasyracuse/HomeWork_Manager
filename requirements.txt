@@ -1,0 +1,7 @@
+streamlit
+openai
+google-generativeai
+anthropic
+chromadb
+pysqlite3-binary
+beautifulsoup4
