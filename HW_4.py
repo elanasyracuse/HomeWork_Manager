@@ -44,7 +44,7 @@ PERSIST_DIR = ".chromadb"
 COLLECTION_NAME = "iSchoolOrgsCollection"
 HTML_GLOB = "su_orgs/**/*.html"
 EMBED_MODEL = "text-embedding-3-small"
-K_CHUNKS = 3
+K_CHUNKS = 5
 TEMPERATURE = 0.2
 
 # Sidebar controls
@@ -129,12 +129,11 @@ def rag_answer(question: str, model: str):
     context = "\n\n".join(res.get("documents", [[]])[0])
 
     system_prompt = (
-       "You are a helpful assistant for iSchool student organizations. "
-        "Answer the user's question based *only* on the provided context. "
-        "If the context is insufficient to answer the question, or if the question "
-        "is unrelated to student orgs, politely decline and briefly state your "
-        "purpose. For example: 'I'm sorry, I can only answer questions about "
-        "iSchool student organizations.'"
+    "You are a helpful assistant for iSchool student organizations. "
+    "Answer the user's question by synthesizing information from the provided context. "
+    "If the context is insufficient to fully answer, provide what information you can and "
+    "then state what you cannot answer. If the question is completely unrelated to the context, "
+    "politely state that you can only answer questions about iSchool student orgs."
     )
     user_content = f"User question: {question}\n\nRetrieved context:\n{context}"
     
